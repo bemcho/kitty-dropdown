@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+kitty_bin="$HOME/.local/kitty.app/bin"
+user_config="${XDG_CONFIG_HOME:-$HOME/.config}/kitty-dropdown/config.conf"
+state_file="${XDG_STATE_HOME:-$HOME/.local/state}/kitty-dropdown/controls.conf"
+session_file="${state_file%/*}/session.kitty"
+
+if [[ ! -x "$kitty_bin/kitten" ]]; then
+	printf 'Install native Kitty in %s first.\n' "$HOME/.local/kitty.app" >&2
+	exit 1
+fi
+
+export PATH="$kitty_bin:$PATH"
+# An existing Kitty terminal can point kittens at an older installation.
+unset KITTY_INSTALLATION_DIR KITTY_PID
+# GNOME Wayland (Mutter) lacks the layer-shell protocol Kitty panels need;
+# run the dropdown through XWayland instead. No-op on a pure X11 session.
+unset WAYLAND_DISPLAY
+additional_configs=()
+for config in "$user_config" "$state_file"; do
+	if [[ -f "$config" ]]; then
+		additional_configs+=(--config "$config")
+	fi
+done
+cd -- "$HOME"
+exec "$kitty_bin/kitten" quick-access-terminal \
+	--config "$project_dir/quick-access-terminal.conf" \
+	"${additional_configs[@]}" \
+	--instance-group kitty-dropdown \
+	--override "kitty_override=watcher=$project_dir/controls.py" \
+	--override "kitty_override=watcher=$project_dir/desktop.py" \
+	--override "kitty_override=startup_session=$session_file" \
+	"$@" \
+	--detach
