@@ -115,12 +115,13 @@ class ControlsTests(unittest.TestCase):
 
     def test_monitor_placement_caps_height_and_targets_only_the_dropdown(self):
         result = SimpleNamespace(stdout="[1920, 29, 1920, 800]")
-        with patch("subprocess.run", return_value=result), patch("subprocess.Popen") as move:
+        move = Mock()
+        with patch("subprocess.run", return_value=result), patch.dict(
+            Controls.place.__globals__, {"x11_move": move}
+        ):
             self.controls.place()
         self.native.set_os_window_size.assert_called_once_with(1, 1920, 800)
-        move.assert_called_once_with(
-            ["wmctrl", "-i", "-r", "0x7b", "-e", "0,1920,29,-1,-1"]
-        )
+        move.assert_called_once_with(123, 1920, 29)
 
     def test_watcher_reinstallation_preserves_existing_focus_callbacks(self):
         callback = Mock()
@@ -296,6 +297,108 @@ class MonitorTests(unittest.TestCase):
             self.assertEqual(panel.handle_single_instance_command(boss, [], {}), "result")
         visible.place.assert_called_once_with()
         hidden.place.assert_not_called()
+
+
+class PointerTests(unittest.TestCase):
+    def test_pointer_position_reads_x11_root_coordinates(self):
+        import ctypes as real_ctypes
+
+        def fake_query(display, root, root_return, child_return,
+                       root_x, root_y, win_x, win_y, mask_return):
+            real_ctypes.cast(
+                root_x, real_ctypes.POINTER(real_ctypes.c_int)
+            )[0] = 1697
+            real_ctypes.cast(
+                root_y, real_ctypes.POINTER(real_ctypes.c_int)
+            )[0] = 709
+            return 1
+
+        fake_xlib = SimpleNamespace(
+            XOpenDisplay=lambda name: 42,
+            XDefaultRootWindow=lambda display: 99,
+            XQueryPointer=fake_query,
+            XCloseDisplay=lambda display: None,
+        )
+        with patch("ctypes.CDLL", return_value=fake_xlib):
+            self.assertEqual(DESKTOP["pointer_position"](), (1697, 709))
+
+
+class GnomeMonitorTests(unittest.TestCase):
+    def test_wayland_prefers_compositor_monitor_over_stale_x11_pointer(self):
+        monitor_geometry = DESKTOP["monitor_geometry"]
+        workarea = Mock(return_value=(1920, 29, 2560, 1411))
+        pointer = Mock(return_value=(100, 100))  # Last position on the left monitor.
+        with patch.dict(os.environ, XDG_SESSION_TYPE="wayland"), patch.dict(
+            monitor_geometry.__globals__, gnome_workarea=workarea, pointer_position=pointer,
+        ):
+            self.assertEqual(monitor_geometry(), (1920, 29, 2560, 1411))
+        workarea.assert_called_once_with()
+        pointer.assert_not_called()
+
+    def test_compositor_workarea_is_converted_to_xwayland_pixels(self):
+        from gi.repository import Gio, GLib
+
+        workarea = DESKTOP["gnome_workarea"]
+        result = GLib.Variant("(iiiiii)", (960, 29, 1280, 691, 2240, 720))
+        for size, expected in (
+            ((4480, 1440), (1920, 58, 2560, 1382)),
+            ((2240, 720), (960, 29, 1280, 691)),
+            ((4480, 720), None),
+        ):
+            with self.subTest(root_size=size), patch.object(
+                Gio, "bus_get_sync", return_value=SimpleNamespace(call_sync=Mock(return_value=result)),
+            ), patch.dict(workarea.__globals__, x11_screen_size=lambda: size):
+                self.assertEqual(workarea(), expected)
+
+    def test_missing_compositor_helper_falls_back_to_x11_lookup(self):
+        from gi.repository import Gio, GLib
+
+        geometry = SimpleNamespace(x=0, y=0, width=1920, height=1080)
+        monitor = SimpleNamespace(get_geometry=lambda: geometry)
+        display = SimpleNamespace(get_monitor_at_point=Mock(return_value=monitor))
+        gdk = SimpleNamespace(Display=SimpleNamespace(get_default=lambda: display))
+        monitor_geometry = DESKTOP["monitor_geometry"]
+        with patch.dict(os.environ, XDG_SESSION_TYPE="wayland"), patch.dict(
+            monitor_geometry.__globals__, pointer_position=lambda: (100, 100),
+            net_workareas=lambda: [(0, 29, 4480, 1411)],
+        ), patch("gi.require_version"), patch.dict(
+            sys.modules, {"gi.repository.Gdk": gdk},
+        ), patch.object(Gio, "bus_get_sync", side_effect=GLib.Error("No monitor helper")):
+            self.assertEqual(monitor_geometry(), (0, 29, 1920, 1051))
+        display.get_monitor_at_point.assert_called_once_with(100, 100)
+
+
+class WorkareaTests(unittest.TestCase):
+    def test_preserves_taskbar_insets_within_the_monitor(self):
+        geometry = SimpleNamespace(x=0, y=0, width=1920, height=1080)
+        workareas = [(67, 29, 1853, 1051), (67, 29, 1853, 1051)]
+        self.assertEqual(
+            DESKTOP["workarea_for"](geometry, workareas), (67, 29, 1853, 1051)
+        )
+
+    def test_joined_desktop_workarea_is_clipped_to_each_monitor(self):
+        # In join mode one X screen spans every display and _NET_WORKAREA
+        # is a single rectangle covering the whole desktop. Each monitor
+        # must only claim its own slice of it.
+        spanning = [(0, 29, 4480, 1411)]
+        self.assertEqual(
+            DESKTOP["workarea_for"](
+                SimpleNamespace(x=0, y=0, width=1920, height=1080), spanning
+            ),
+            (0, 29, 1920, 1051),
+        )
+        self.assertEqual(
+            DESKTOP["workarea_for"](
+                SimpleNamespace(x=1920, y=0, width=2560, height=1440), spanning
+            ),
+            (1920, 29, 2560, 1411),
+        )
+
+    def test_misses_when_no_workarea_intersects_the_monitor(self):
+        geometry = SimpleNamespace(x=0, y=0, width=100, height=100)
+        self.assertIsNone(
+            DESKTOP["workarea_for"](geometry, [(200, 200, 100, 100)])
+        )
 
 
 if __name__ == "__main__":

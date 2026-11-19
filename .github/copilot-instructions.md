@@ -24,7 +24,8 @@ Launcher tests substitute a fake portable kitten under a temporary `HOME`;
 installer tests use `GSETTINGS_BACKEND=memory` and a temporary `XDG_CONFIG_HOME`.
 The latter launch a harmless stub through `Gio.DesktopAppInfo`, covering actual
 desktop-entry argument handling, repeated installation, unrelated shortcuts,
-and notification settings without changing the real desktop.
+and notification settings without changing the real desktop. The monitor helper
+installer test uses a temporary `XDG_DATA_HOME` and in-memory extension settings.
 
 For a single manual toggle smoke test in a graphical desktop session, run
 `./toggle` three times, returning focus to the dropdown before invoking it to
@@ -39,7 +40,8 @@ the shortcut registration or remove other custom shortcuts.
 Runtime dependencies are Bash, Python 3 with PyGObject (`gi.repository.Gio`),
 GNOME's media-key GSettings schemas, and a Kitty version supporting
 `kitten quick-access-terminal` and global tab-bar watchers (tested with 0.49.2).
-The X11 monitor helper also requires GTK 3 introspection and `wmctrl`.
+The X11 monitor helper also requires GTK 3 introspection; it reads the
+taskbar-aware work area from the X11 root window's `_NET_WORKAREA`.
 The launcher expects Kitty's portable
 installation at `~/.local/kitty.app/bin`, not the system Kitty executable.
 Inspect native options with:
@@ -114,14 +116,18 @@ Kitty ignores a missing file, and the option applies only when an instance
 starts, so the stable override avoids config reloads on toggles.
 
 On initial focus and after every native show request, the watchers call
-`desktop.py` with system Python to query the pointer monitor's usable geometry
-through GDK. Its `on_load` hook wraps the native panel command handler, applying
-placement after native visibility and configuration updates, and skips hidden
-windows. Do not rely solely on focus callbacks: re-showing need not produce one.
-Native Kitty sets the panel's size, and `wmctrl` positions that specific X11
-window. This narrow workaround is needed because Kitty's native active-monitor
-switching is macOS-only and its X11 panel placement uses the primary monitor.
-Kitty still owns visibility and session lifecycle.
+`desktop.py`. On Wayland it first calls the GNOME Shell extension installed by
+`install-monitor-helper` and converts the compositor's usable area to XWayland
+pixels. This avoids stale `XQueryPointer` coordinates over native Wayland apps.
+The X11 fallback maps `XQueryPointer` through GDK and clips `_NET_WORKAREA` to
+that monitor. The `on_load` hook wraps the native panel command handler,
+applying placement after native visibility and configuration updates, and
+skips hidden windows. Do not
+rely solely on focus callbacks: re-showing need not produce one. Native Kitty
+sets the panel's size, and a direct Xlib move positions that specific X11 window
+(no `wmctrl` dependency). This narrow workaround is needed because Kitty's
+native active-monitor switching is macOS-only and its X11 panel placement uses
+the primary monitor. Kitty still owns visibility and session lifecycle.
 
 ## Key conventions
 

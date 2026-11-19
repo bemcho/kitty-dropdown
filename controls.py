@@ -1,6 +1,10 @@
+import ctypes
+import ctypes.util
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 
@@ -14,6 +18,46 @@ def state_file():
 
 def session_file():
     return state_file().with_name("session.kitty")
+
+
+@lru_cache(maxsize=1)
+def desktop_python():
+    """A python3 that can import gi (PyGObject), for running desktop.py."""
+    for candidate in ("/usr/bin/python3", "python3"):
+        if not shutil.which(candidate):
+            continue
+        try:
+            subprocess.run(
+                [candidate, "-c", "import gi"],
+                capture_output=True, check=True,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            continue
+        return candidate
+    return "python3"
+
+
+def x11_move(window_id, x, y):
+    """Move an X11 window directly, without a wmctrl dependency."""
+    xlib = ctypes.CDLL(ctypes.util.find_library("X11"))
+    xlib.XOpenDisplay.restype = ctypes.c_void_p
+    xlib.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    display = xlib.XOpenDisplay(None)
+    if not display:
+        return
+    try:
+        xlib.XMoveWindow.restype = ctypes.c_int
+        xlib.XMoveWindow.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int,
+        ]
+        xlib.XMoveWindow(display, window_id, int(x), int(y))
+        xlib.XFlush.restype = ctypes.c_int
+        xlib.XFlush.argtypes = [ctypes.c_void_p]
+        xlib.XFlush(display)
+    finally:
+        xlib.XCloseDisplay.restype = ctypes.c_int
+        xlib.XCloseDisplay.argtypes = [ctypes.c_void_p]
+        xlib.XCloseDisplay(display)
 
 
 class Controls:
@@ -199,7 +243,7 @@ class Controls:
         if window_id:
             height = height or self.config()["y_size_in_pixels"]
             result = subprocess.run(
-                ["python3", str(Path(__file__).with_name("desktop.py"))],
+                [desktop_python(), str(Path(__file__).with_name("desktop.py"))],
                 check=True, capture_output=True, text=True,
             )
             area = json.loads(result.stdout)
@@ -210,9 +254,7 @@ class Controls:
                 self.manager.os_window_id, width, min(max(240, height), maximum)
             )
             # Kitty's X11 panel placement currently uses the primary monitor.
-            subprocess.Popen(
-                ["wmctrl", "-i", "-r", hex(window_id), "-e", f"0,{x},{y},-1,-1"]
-            )
+            x11_move(window_id, x, y)
 
     def focus(self, boss, window, data):
         if data["focused"]:

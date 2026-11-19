@@ -1,6 +1,8 @@
+import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -94,7 +96,7 @@ class SetupTests(unittest.TestCase):
             )
             launcher.chmod(0o755)
             result = subprocess.run(
-                ["python3", "-c", """
+                [sys.executable, "-c", """
 import json
 import runpy
 import shlex
@@ -134,6 +136,32 @@ assert not notifications.get_boolean("enable")
                 capture_output=True, text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_monitor_helper_installs_and_enables_only_its_extension(self):
+        with tempfile.TemporaryDirectory() as data:
+            uuid = json.loads((ROOT / "gnome-monitor/metadata.json").read_text())["uuid"]
+            result = subprocess.run(
+                [sys.executable, "-c", """
+import runpy
+import sys
+from gi.repository import Gio
+
+installer, uuid = sys.argv[1:]
+settings = Gio.Settings.new('org.gnome.shell')
+settings.set_strv('enabled-extensions', ['already-enabled@example.com'])
+settings.set_strv('disabled-extensions', ['still-disabled@example.com', uuid])
+for _ in range(2):
+    runpy.run_path(installer)
+assert settings.get_strv('enabled-extensions') == ['already-enabled@example.com', uuid]
+assert settings.get_strv('disabled-extensions') == ['still-disabled@example.com']
+""", str(ROOT / "install-monitor-helper"), uuid],
+                env=dict(os.environ, GSETTINGS_BACKEND="memory", XDG_DATA_HOME=data),
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            destination = Path(data) / "gnome-shell/extensions" / uuid
+            for name in ("metadata.json", "extension.js"):
+                self.assertEqual((destination / name).read_bytes(), (ROOT / "gnome-monitor" / name).read_bytes())
 
 
 if __name__ == "__main__":

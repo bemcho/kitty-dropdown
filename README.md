@@ -2,8 +2,8 @@
 
 A native Kitty dropdown with **Ctrl+Esc** to show or hide the same terminal
 session. It starts hidden at graphical login and hides when another window
-receives focus. On GNOME X11, it follows the monitor containing the mouse
-pointer. No `tdrop` is used.
+receives focus. It follows the monitor containing the mouse pointer on GNOME
+X11 and on GNOME Wayland with the monitor helper below. No `tdrop` is used.
 
 ## Features
 
@@ -20,13 +20,13 @@ pointer. No `tdrop` is used.
 
 Requires a GNOME desktop session, Bash, Python 3 with PyGObject, and a Kitty
 version that supports `kitten quick-access-terminal` and global tab-bar watchers
-(tested with Kitty 0.49.2). Monitor placement also uses GTK 3 introspection and
-`wmctrl` on X11.
+(tested with Kitty 0.49.2). The X11 monitor lookup uses GTK 3 introspection,
+`XQueryPointer`, and `_NET_WORKAREA`. On Wayland, Kitty runs through XWayland.
 
 On Ubuntu, install the Python integration if needed:
 
 ```sh
-sudo apt install python3-gi gir1.2-glib-2.0 gir1.2-gtk-3.0 wmctrl
+sudo apt install python3-gi gir1.2-glib-2.0 gir1.2-gtk-3.0
 ```
 
 Install the official portable Kitty release at `~/.local/kitty.app`:
@@ -51,6 +51,19 @@ once per session: invoking the launcher again toggles the existing terminal.
 
 Keep the checkout in place. If you move it, rerun `./install-shortcut` to update
 the shortcut and autostart paths.
+
+### Follow the pointer on GNOME Wayland
+
+If `echo "$XDG_SESSION_TYPE"` prints `wayland`, install the monitor helper once:
+
+```sh
+./install-monitor-helper
+```
+
+Log out and back in so GNOME Shell loads the extension. It reports the usable
+area of the pointer's monitor, including when the pointer is over a native
+Wayland app. Without the helper, the XWayland pointer can be stale and the
+panel may open on the wrong screen. The helper does not change the shortcut.
 
 ## Configure
 
@@ -89,7 +102,7 @@ The checked-in `quick-access-terminal.conf` provides these defaults:
 | Background opacity | `0.74` |
 | Hide on focus loss | `yes` |
 | Tab bar | Bottom, visible with one tab |
-| Monitor | Mouse pointer's monitor on GNOME X11 |
+| Monitor | Mouse pointer's monitor (on Wayland, install the helper) |
 | New-tab directory | Active shell's current directory |
 | Desktop notifications | Filtered; command-finish notifications disabled |
 
@@ -147,8 +160,8 @@ rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/kitty-dropdown/controls.conf"
 ```
 
 The height is clamped between 240 pixels and the current monitor's usable height.
-Ctrl+Esc still hides a pinned dropdown. On X11, showing it on another monitor
-keeps the existing shell and tabs; the panel fits that monitor's usable width.
+Ctrl+Esc still hides a pinned dropdown. Showing it on another monitor keeps the
+existing shell and tabs; the panel fits that monitor's usable width.
 Placement is reapplied after every show request, even without a focus change.
 
 Press **Ctrl+Esc** after editing the configuration to apply it to the existing
@@ -166,12 +179,9 @@ can also change the current binding; rerunning the installer restores Ctrl+Esc.
 
 **The dropdown opens on the wrong monitor:** move the mouse pointer to the
 desired monitor before pressing Ctrl+Esc. Monitor selection follows the pointer,
-not the last focused application. The placement workaround is for GNOME X11;
-Wayland monitor switching is not implemented. Check the detected usable area:
-
-```sh
-python3 desktop.py
-```
+not the last focused application. On Wayland, check that `gnome-extensions info
+kitty-dropdown-monitor@local` shows the helper is active. Check the detected
+usable area with `env -u WAYLAND_DISPLAY python3 desktop.py`.
 
 **An edited initial height or pin setting does not take effect:** remembered
 bar choices override the per-user configuration. Remove the saved controls file
@@ -195,7 +205,9 @@ rm "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/kitty-dropdown.desktop"
 ```
 
 Remove **Kitty dropdown** from GNOME Settings -> Keyboard -> Custom Shortcuts
-to disable the shortcut. Close the dropdown's shells normally to stop it.
+to disable the shortcut. Remove the optional monitor helper with
+`gnome-extensions uninstall kitty-dropdown-monitor@local`. Close the dropdown's
+shells normally to stop it.
 To re-enable Kitty notifications in GNOME:
 
 ```sh

@@ -1,0 +1,6 @@
+{
+  "uuid": "kitty-dropdown-monitor@local",
+  "name": "Kitty Dropdown Monitor",
+  "description": "Reports the usable area of the pointer's monitor to kitty-dropdown on GNOME Wayland.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"]
+}
